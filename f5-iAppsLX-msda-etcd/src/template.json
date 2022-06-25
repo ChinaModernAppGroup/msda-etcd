@@ -1,0 +1,107 @@
+{
+  "name": "msdaetcd",
+  "inputProperties": [
+    {
+      "id": "etcdEndpoint",
+      "type": "STRING",
+      "value": "1.1.1.1:2379, 1.1.1.2:2379",
+      "metaData": {
+        "description": "Etcd endpoint list, eg. 1.1.1.1:2379, 1.1.1.2:2379",
+        "displayName": "etcd endpoints",
+        "isRequired": true
+      }
+    },
+    {
+      "id": "poolName",
+      "type": "STRING",
+      "value": "/Common/samplePool",
+      "metaData": {
+        "description": "Pool Name to be created",
+        "displayName": "BIG-IP Pool Name",
+        "isRequired": true
+      }
+    },
+    {
+      "id": "poolType",
+      "type": "STRING",
+      "value": "round-robin",
+      "metaData": {
+        "description": "load-balancing-mode",
+        "displayName": "Load Balancing Mode",
+        "isRequired": true,
+        "uiType": "dropdown",
+        "uiHints": {
+          "list": {
+            "dataList": [
+              "round-robin",
+              "least-connections-member",
+              "least-connections-node"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "healthMonitor",
+      "type": "STRING",
+      "value": "none",
+      "metaData": {
+        "description": "Health Monitor",
+        "displayName": "Health Monitor",
+        "isRequired": true,
+        "uiType": "dropdown",
+        "uiHints": {
+          "list": {
+            "dataList": [
+              "tcp",
+              "udp",
+              "http",
+              "none"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "serviceName",
+      "type": "STRING",
+      "value": "http",
+      "metaData": {
+        "description": "Service name to be exposed",
+        "displayName": "Service Name in etcd",
+        "isRequired": true
+      }
+    }
+  ],
+  "dataProperties": [
+    {
+      "id": "pollInterval",
+      "type": "NUMBER",
+      "value": 30,
+      "metaData": {
+        "description": "Interval of polling from BIG-IP to etcd, 30s by default.",
+        "displayName": "Polling Invertal",
+        "isRequired": false
+      }
+    }
+  ],
+  "configurationProcessorReference": {
+    "link": "https://localhost/mgmt/shared/iapp/processors/msdaetcdConfig"
+  },
+  "auditProcessorReference": {
+    "link": "https://localhost/mgmt/shared/iapp/processors/msdaetcdEnforceConfiguredAudit"
+  },
+  "audit": {
+    "intervalSeconds": 60,
+    "policy": "ENFORCE_CONFIGURED"
+  },
+  "configProcessorTimeoutSeconds": 30,
+  "statsProcessorTimeoutSeconds": 15,
+  "configProcessorAffinity": {
+    "processorPolicy": "LOAD_BALANCED",
+    "affinityProcessorReference": {
+      "link": "https://localhost/mgmt/shared/iapp/processors/affinity/load-balanced"
+    }
+  },
+  "state": "TEMPLATE"
+}
