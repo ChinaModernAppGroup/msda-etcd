@@ -19,15 +19,15 @@
 'use strict';
 
 
-var q = require("q");
+//var q = require("q");
 
 var blockUtil = require("./blockUtils");
 var logger = require("f5-logger").getInstance();
-var fs = require('fs');
+//var fs = require('fs');
 
 // Setup a signal for onpolling status. It has an initial state "false".
-const msdaetcdv3OnPollingSignal = '/var/tmp/msdaetcdv3OnPolling';
-var msdaOnPolling = false;
+//const msdaetcdv3OnPollingSignal = '/var/tmp/msdaetcdv3OnPolling';
+//var msdaOnPolling = false;
 
 
 function msdaetcdv3EnforceConfiguredAuditProcessor() {
@@ -74,47 +74,70 @@ msdaetcdv3EnforceConfiguredAuditProcessor.prototype.onPost = function (restOpera
     var oThis = this;
     var auditTaskState = restOperation.getBody();
 
-    try {
-        if (!auditTaskState ) {
-            throw new Error("AUDIT: Audit task state must exist ");
+    setTimeout(function () {
+      try {
+        if (!auditTaskState) {
+          throw new Error("AUDIT: Audit task state must exist ");
         }
         /*
-        logger.fine(getLogHeader() + "Incoming properties: " +
-            this.restHelper.jsonPrinter(auditTaskState.currentInputProperties));
-        
-        
-        var blockInputProperties = blockUtil.getMapFromPropertiesAndValidate(
-            auditTaskState.currentInputProperties,
-            ["etcdv3Endpoint", "authenticationCert", "nameSpace", "serviceName", "poolName", "poolType", "healthMonitor"]
-        );
-        
+            logger.fine(getLogHeader() + "Incoming properties: " +
+                this.restHelper.jsonPrinter(auditTaskState.currentInputProperties));
         */
+
+        var blockInputProperties = blockUtil.getMapFromPropertiesAndValidate(
+          auditTaskState.currentInputProperties,
+          [
+            //"etcdv3Endpoint",
+            //"authenticationCert",
+            //"nameSpace",
+            //"serviceName",
+            "poolName",
+            "poolType",
+            "healthMonitor",
+          ]
+        );
+
         // Check the polling state, trigger ConfigProcessor if needed.
         // Move the signal checking here
-        logger.fine('MSDA etcdv3 Audit: msdaOnpolling: ', msdaOnPolling);
-        fs.access(msdaetcdv3OnPollingSignal, fs.constants.F_OK, function (err) {
-            if (err) {
-                logger.fine('MSDA etcdv3 Audit: Checking polling signal hits error: ', err.message);
-                logger.fine("MSDA etcdv3 audit onPost: ConfigProcessor is NOT on polling state, will set msdaOnpolling status to FALSE.");
-                msdaOnPolling = false;
-                try {
-                    var poolNameObject = getObjectByID("poolName", auditTaskState.currentInputProperties);
-                    poolNameObject.value = null;
-                    oThis.finishOperation(restOperation, auditTaskState);
-                    logger.fine("MSDA etcdv3 audit onPost: trigger ConfigProcessor onPost ");
-                } catch (err) {
-                    logger.fine("MSDA etcdv3 audit onPost: Failed to send out restOperation. ", err.message);
-                }
-            } else {
-                logger.fine("MSDA etcdv3 audit onPost: ConfigProcessor is on polling state, will set msdaOnPolling status to TRUE.");
-                logger.fine("MSDA etcdv3 audit onPost: ConfigProcessor is on polling state, no need to fire an onPost.");
-                msdaOnPolling = true;
-            }
-        });
-    } catch (ex) {
-        logger.fine("msdaetcdv3EnforceConfiguredAuditProcessor.prototype.onPost caught generic exception " + ex);
+        logger.fine("MSDA etcdv3 Audit: msdaetcdv3Onpolling: ", global.msdaetcdv3OnPolling);
+        logger.fine("MSDA etcdv3 Audit: msdaetcdv3 poolName: ", blockInputProperties.poolName.value);
+        if (
+          global.msdaetcdv3OnPolling.includes(
+            blockInputProperties.poolName.value
+          )
+        ) {
+          logger.fine(
+            "MSDA etcdv3 audit onPost: ConfigProcessor is on polling state, no need to fire an onPost."
+          );
+        } else {
+          logger.fine(
+            "MSDA etcdv3 audit onPost: ConfigProcessor is NOT on polling state, will trigger ConfigProcessor onPost."
+          );
+          try {
+            var poolNameObject = getObjectByID(
+              "poolName",
+              auditTaskState.currentInputProperties
+            );
+            poolNameObject.value = null;
+            oThis.finishOperation(restOperation, auditTaskState);
+            logger.fine(
+              "MSDA etcdv3 audit onPost: trigger ConfigProcessor onPost "
+            );
+          } catch (err) {
+            logger.fine(
+              "MSDA etcdv3 audit onPost: Failed to send out restOperation. ",
+              err.message
+            );
+          }
+        }
+      } catch (ex) {
+        logger.fine(
+          "msdaetcdv3EnforceConfiguredAuditProcessor.prototype.onPost caught generic exception " +
+            ex
+        );
         restOperation.fail(ex);
-    }
+      }
+    }, 1000);
 };
 
 var getObjectByID = function ( key, array) {
