@@ -1,7 +1,7 @@
 Summary: F5 Basic iApp
 Name: f5-iapplx-msda-etcd
 Version: 0.0.6
-Release: 0002
+Release: 0004
 BuildArch: noarch
 Group: Development/Libraries
 License: Commercial

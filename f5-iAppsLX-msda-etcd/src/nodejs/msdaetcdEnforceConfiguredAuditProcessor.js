@@ -13,21 +13,21 @@
   language governing permissions and limitations under the License.
 
   Updated by Ping Xiong on May/13/2022
-
+  Updated by Ping Xiong on Jul/3/2022, using global var for polling signal.
 */
 
 'use strict';
 
 
-var q = require("q");
+//var q = require("q");
 
 var blockUtil = require("./blockUtils");
 var logger = require("f5-logger").getInstance();
-var fs = require('fs');
+//var fs = require('fs');
 
 // Setup a signal for onpolling status. It has an initial state "false".
-const msdaetcdOnPollingSignal = '/var/tmp/msdaetcdOnPolling';
-var msdaOnPolling = false;
+//const msdaetcdOnPollingSignal = '/var/tmp/msdaetcdOnPolling';
+//var msdaOnPolling = false;
 
 
 function msdaetcdEnforceConfiguredAuditProcessor() {
@@ -74,47 +74,68 @@ msdaetcdEnforceConfiguredAuditProcessor.prototype.onPost = function (restOperati
     var oThis = this;
     var auditTaskState = restOperation.getBody();
 
-    try {
-        if (!auditTaskState ) {
+    setTimeout(function () {
+        try {
+            if (!auditTaskState) {
             throw new Error("AUDIT: Audit task state must exist ");
-        }
-        /*
-        logger.fine(getLogHeader() + "Incoming properties: " +
-            this.restHelper.jsonPrinter(auditTaskState.currentInputProperties));
-        
-        
-        var blockInputProperties = blockUtil.getMapFromPropertiesAndValidate(
-            auditTaskState.currentInputProperties,
-            ["etcdEndpoint", "authenticationCert", "nameSpace", "serviceName", "poolName", "poolType", "healthMonitor"]
-        );
-        
-        */
-        // Check the polling state, trigger ConfigProcessor if needed.
-        // Move the signal checking here
-        logger.fine('MSDA etcd Audit: msdaOnpolling: ', msdaOnPolling);
-        fs.access(msdaetcdOnPollingSignal, fs.constants.F_OK, function (err) {
-            if (err) {
-                logger.fine('MSDA etcd Audit: Checking polling signal hits error: ', err.message);
-                logger.fine("MSDA etcd audit onPost: ConfigProcessor is NOT on polling state, will set msdaOnpolling status to FALSE.");
-                msdaOnPolling = false;
-                try {
-                    var poolNameObject = getObjectByID("poolName", auditTaskState.currentInputProperties);
-                    poolNameObject.value = null;
-                    oThis.finishOperation(restOperation, auditTaskState);
-                    logger.fine("MSDA etcd audit onPost: trigger ConfigProcessor onPost ");
-                } catch (err) {
-                    logger.fine("MSDA etcd audit onPost: Failed to send out restOperation. ", err.message);
-                }
-            } else {
-                logger.fine("MSDA etcd audit onPost: ConfigProcessor is on polling state, will set msdaOnPolling status to TRUE.");
-                logger.fine("MSDA etcd audit onPost: ConfigProcessor is on polling state, no need to fire an onPost.");
-                msdaOnPolling = true;
             }
-        });
-    } catch (ex) {
-        logger.fine("msdaetcdEnforceConfiguredAuditProcessor.prototype.onPost caught generic exception " + ex);
-        restOperation.fail(ex);
-    }
+            /*
+                logger.fine(getLogHeader() + "Incoming properties: " +
+                this.restHelper.jsonPrinter(auditTaskState.currentInputProperties));
+                
+            */
+            var blockInputProperties = blockUtil.getMapFromPropertiesAndValidate(
+            auditTaskState.currentInputProperties,
+            [
+                //"etcdEndpoint",
+                //"authenticationCert",
+                //"nameSpace",
+                "serviceName",
+                "poolName",
+                "poolType",
+                "healthMonitor",
+            ]
+            );
+
+            // Check the polling state, trigger ConfigProcessor if needed.
+            // Move the signal checking here
+            logger.fine("MSDA etcd Audit: msdaetcdOnpolling: ", global.msdaetcdOnPolling);
+            logger.fine("MSDA etcd Audit: msdaetcd poolName: ", blockInputProperties.poolName.value);
+            if (
+                    global.msdaetcdOnPolling.includes(blockInputProperties.poolName.value)
+                ) {
+                    logger.fine(
+                    "MSDA etcd audit onPost: ConfigProcessor is on polling state, no need to fire an onPost."
+                    );
+                } else {
+                    logger.fine(
+                    "MSDA etcd audit onPost: ConfigProcessor is NOT on polling state, will trigger ConfigProcessor onPost."
+                    );
+                    try {
+                        var poolNameObject = getObjectByID(
+                            "poolName",
+                            auditTaskState.currentInputProperties
+                        );
+                        poolNameObject.value = null;
+                        oThis.finishOperation(restOperation, auditTaskState);
+                        logger.fine(
+                            "MSDA etcd audit onPost: trigger ConfigProcessor onPost "
+                        );
+                    } catch (err) {
+                        logger.fine(
+                            "MSDA etcd audit onPost: Failed to send out restOperation. ",
+                            err.message
+                        );
+                    }
+                }
+        } catch (ex) {
+            logger.fine(
+            "msdaetcdEnforceConfiguredAuditProcessor.prototype.onPost caught generic exception " +
+                ex
+            );
+            restOperation.fail(ex);
+        }
+    }, 1000);
 };
 
 var getObjectByID = function ( key, array) {
