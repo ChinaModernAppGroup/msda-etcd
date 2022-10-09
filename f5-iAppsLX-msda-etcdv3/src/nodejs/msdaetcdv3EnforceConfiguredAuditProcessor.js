@@ -13,7 +13,12 @@
   language governing permissions and limitations under the License.
 
   Updated by Ping Xiong on May/13/2022
-
+  Updated by Ping Xiong on Oct/09/2022, modify the polling signal into a json object to keep more information.
+  let blockInstance = {
+    name: "instanceName", // a block instance of the iapplx config
+    state: "polling", // can be "polling" for normal running state; "update" to modify the iapplx config
+    bigipPool: "/Common/samplePool"
+  }
 */
 
 'use strict';
@@ -102,16 +107,19 @@ msdaetcdv3EnforceConfiguredAuditProcessor.prototype.onPost = function (restOpera
         logger.fine("MSDA etcdv3 Audit: msdaetcdv3Onpolling: ", global.msdaetcdv3OnPolling);
         logger.fine("MSDA etcdv3 Audit: msdaetcdv3 poolName: ", blockInputProperties.poolName.value);
         if (
-          global.msdaetcdv3OnPolling.includes(
-            blockInputProperties.poolName.value
+          global.msdaetcdv3OnPolling.some(
+            (instance) =>
+              instance.bigipPool === blockInputProperties.poolName.value
           )
         ) {
           logger.fine(
-            "MSDA etcdv3 audit onPost: ConfigProcessor is on polling state, no need to fire an onPost."
+            "MSDA etcdv3 audit onPost: ConfigProcessor is on polling state, no need to fire an onPost.",
+            blockInputProperties.poolName.value
           );
         } else {
           logger.fine(
-            "MSDA etcdv3 audit onPost: ConfigProcessor is NOT on polling state, will trigger ConfigProcessor onPost."
+            "MSDA etcdv3 audit onPost: ConfigProcessor is NOT on polling state, will trigger ConfigProcessor onPost.",
+            blockInputProperties.poolName.value
           );
           try {
             var poolNameObject = getObjectByID(
@@ -137,7 +145,7 @@ msdaetcdv3EnforceConfiguredAuditProcessor.prototype.onPost = function (restOpera
         );
         restOperation.fail(ex);
       }
-    }, 1000);
+    }, 2000);
 };
 
 var getObjectByID = function ( key, array) {

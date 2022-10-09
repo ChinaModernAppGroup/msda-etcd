@@ -1,7 +1,7 @@
 Summary: F5 Basic iApp
 Name: f5-iapplx-msda-etcdv3
-Version: 0.0.2
-Release: 0003
+Version: 0.0.3
+Release: 0001
 BuildArch: noarch
 Group: Development/Libraries
 License: Commercial
