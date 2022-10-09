@@ -14,6 +14,12 @@
   
   Updated by Ping Xiong on Apr/29/2022.
   Updated by Ping Xiong on Jul/3/2022, using global var for polling signal.
+  Updated by Ping Xiong on Oct/09/2022, modify the polling signal into a json object to keep more information.
+  let blockInstance = {
+    name: "instanceName", // a block instance of the iapplx config
+    state: "polling", // can be "polling" for normal running state; "update" to modify the iapplx config
+    bigipPool: "/Common/samplePool"
+  }
 */
 
 'use strict';
@@ -92,6 +98,7 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
         oThis = this;
     logger.fine("MSDA: onPost, msdaetcdConfigProcessor.prototype.onPost");
 
+    var instanceName;
     var inputProperties;
     var dataProperties;
     try {
@@ -99,6 +106,7 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
         blockState = configTaskState.block;
         logger.fine("MSDA: onPost, inputProperties ", blockState.inputProperties);
         logger.fine("MSDA: onPost, dataProperties ", blockState.dataProperties);
+        logger.fine("MSDA: onPost, instanceName ", blockState.name);
         inputProperties = blockUtil.getMapFromPropertiesAndValidate(
             blockState.inputProperties,
             ["etcdEndpoint", "poolName", "poolType", "healthMonitor", "serviceName"]
@@ -107,7 +115,7 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
             blockState.dataProperties,
             ["pollInterval"]
         );
-
+        instanceName = blockState.name;
     } catch (ex) {
         restOperation.fail(ex);
         return;
@@ -135,39 +143,113 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
     // Check the existence of the pool in BIG-IP, create an empty pool if the pool doesn't exist.
     mytmsh.executeCommand("tmsh -a list ltm pool " + inputPoolName)
     .then(function () {
-        logger.fine("MSDA: onPost, found the pool, no need to create an empty pool.");
+        logger.fine(
+          "MSDA: onPost, " +
+            instanceName +
+            " found the pool, no need to create an empty pool."
+        );
         return;
     }, function (error) {
-        logger.fine("MSDA: onPost, GET of pool failed, adding an empty pool: " + inputPoolName);
+        logger.fine(
+          "MSDA: onPost, " +
+            instanceName +
+            " GET of pool failed, adding an empty pool: " +
+            inputPoolName
+        );
         let inputEmptyPoolConfig = inputPoolName + ' monitor ' + inputMonitor + ' load-balancing-mode ' + inputPoolType + ' members none';
         let commandCreatePool = 'tmsh -a create ltm pool ' + inputEmptyPoolConfig;
         return mytmsh.executeCommand(commandCreatePool);
     })
     .catch(function (error) {
-        logger.fine("MSDA: onPost, list pool failed: " + error.message);
+        logger.fine(
+          "MSDA: onPost, " +
+            instanceName +
+            " list pool failed: ",
+            error.message
+        );
     });
 
     // Set the polling interval
     if (pollInterval) {
         if (pollInterval < 10000) {
-            logger.fine("MSDA: onPost, pollInternal is too short, will set it to 10s ", pollInterval);
+            logger.fine(
+              "MSDA: onPost, " +
+                instanceName +
+                " pollInternal is too short, will set it to 10s ",
+              pollInterval
+            );
             pollInterval = 10000;
         }
     } else {
-        logger.fine("MSDA: onPost, pollInternal is not set, will set it to 30s ", pollInterval);
+        logger.fine(
+          "MSDA: onPost, " +
+            instanceName +
+            " pollInternal is not set, will set it to 30s ",
+          pollInterval
+        );
         pollInterval = 30000;
     }
     
-    // Setup the polling signal for audit
-    if (global.msdaetcdOnPolling.includes(inputPoolName)) {
-        return logger.fine("MSDA: onPost, already has an instance polling the same pool, please check it out: " + inputPoolName);
-    } else { 
-        global.msdaetcdOnPolling.push(inputPoolName);
-        logger.fine("MSDA onPost: set msdaetcdOnpolling signal: ", global.msdaetcdOnPolling);
+    // Setup the polling signal for audit and update
+    let blockInstance = {
+        name: instanceName,
+        bigipPool: inputPoolName,
+        state: "polling",
+    };
+
+    let signalIndex = global.msdaetcdOnPolling.findIndex(
+      (instance) => instance.name === instanceName
+    );
+    if (signalIndex !== -1) {
+        // Already has the instance, change the state into "update"
+        global.msdaetcdOnPolling.splice(signalIndex, 1);
+        blockInstance.state = "update";
+    }
+    logger.fine("MSDA: onPost, blockInstance:", blockInstance);
+
+    // Setup a signal to identify existing polling loop
+    var existingPollingLoop = false;
+
+    // Check if there is a conflict bigipPool in configuration
+
+    if (
+        global.msdaetcdOnPolling.some(
+            (instance) => instance.bigipPool === inputPoolName
+        )
+    ) {
+        logger.fine(
+            "MSDA: onPost, " +
+            instanceName +
+            " already has an instance polling the same pool, change BLOCK to ERROR: ",
+            inputPoolName
+        );
+      try {
+        throw new Error(
+            "onPost: poolName conflict: " +
+                inputPoolName +
+                " , will set the BLOCK to ERROR state"
+        );
+      } catch (error) {
+            configTaskUtil.sendPatchToErrorState(
+            configTaskState,
+            error,
+            oThis.getUri().href,
+            restOperation.getBasicAuthorization()
+            );
+      }
+      return;
+    } else {
+        global.msdaetcdOnPolling.push(blockInstance);
+        logger.fine(
+            "MSDA onPost: " + instanceName + " set msdaetcdOnpolling signal: ",
+            global.msdaetcdOnPolling
+        );
     }
 
     logger.fine(
-      "MSDA: onPost, Input properties accepted, change to BOUND status, start to poll etcd: " +
+      "MSDA: onPost, " +
+        instanceName +
+        " Input properties accepted, change to BOUND status, start to poll etcd: ",
         inputPoolName
     );
 
@@ -179,21 +261,70 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
     // A internal service to retrieve service member information from registry, and then update BIG-IP setting.
 
     inputEndPoint = inputEndPoint.toString().split(","); 
-    logger.fine("MSDA: onPost, etcd endpoints: " + inputEndPoint);
+    logger.fine(
+      "MSDA: onPost, " + instanceName + " etcd endpoints: " + inputEndPoint
+    );
     var etcdRegistry = etcdJsClient(inputEndPoint);
 
     (function schedule() {
         var pollEtcd = setTimeout(function () {
+
+            // If signal is "update", change it into "polling" for new polling loop
+            if (global.msdaetcdOnPolling.some(instance => instance.name === instanceName)) {
+                let signalIndex = global.msdaetcdOnPolling.findIndex(instance => instance.name === instanceName);
+                if (global.msdaetcdOnPolling[signalIndex].state === "update") {
+                    if (existingPollingLoop) {
+                        logger.fine(
+                            "MSDA: onPost/polling, " +
+                            instanceName +
+                            " update config, existing polling loop."
+                        );
+                    } else {
+                        //logger.fine("MSDA: onPost/polling, " + instanceName + " update config, a new polling loop.");
+                        global.msdaetcdOnPolling[signalIndex].state = "polling";
+                        logger.fine(
+                            "MSDA: onPost/polling, " +
+                            instanceName +
+                            " update the signal.state into polling for new polling loop: ",
+                            global.msdaetcdOnPolling[signalIndex]
+                        );
+                    }
+                }
+                // update the existingPollingLoop to true
+                existingPollingLoop = true;
+            } else {
+                // Non-exist instance, will NOT proceed to poll the registry
+                return logger.fine(
+                    "MSDA: onPost/polling, " +
+                    instanceName +
+                    " Stop polling registry."
+                );
+            }
+
+            // Start to poll the etcd registry ...
+
             etcdRegistry.get(inputServiceName, function (err, result) {                
                 //logger.fine("Error: " + Error(err));
                 if (result && result.node.nodes) {
-                    logger.fine("MSDA: onPost, Result from etcd: " + result);
+                    logger.fine(
+                      "MSDA: onPost, " +
+                        instanceName +
+                        " Result from etcd: ",
+                        result
+                    );
                     let nodes = result.node.nodes;
                     let nodeAddress = [];
                     nodes.forEach(element => {
                         nodeAddress.push(element.value);
                     });
-                    logger.fine("MSDA: onPost, Nodes of service " + inputServiceName + " : " + nodeAddress);
+                    logger.fine(
+                      "MSDA: onPost, " +
+                        instanceName +
+                        " Nodes of service " +
+                        inputServiceName +
+                        " : " +
+                        nodeAddress
+                    );
 
                     // Format the node information into pool members form
                     poolMembers = "{" + nodeAddress.join(" ") + "}";
@@ -204,66 +335,158 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
 
                     // Start with check the exisitence of the given pool
                     mytmsh.executeCommand("tmsh -a list ltm pool " + inputPoolName).then(function () {
-                        logger.fine("MSDA: onPost, Found a pre-existing pool. Update pool setting: " + inputPoolName);
+                        logger.fine(
+                          "MSDA: onPost, " +
+                            instanceName +
+                            " Found a pre-existing pool. Update pool setting: " +
+                            inputPoolName
+                        );
                         let commandUpdatePool = 'tmsh -a modify ltm pool ' + inputPoolConfig;
                         return mytmsh.executeCommand(commandUpdatePool);
                     }, function (error) {
-                        logger.fine("MSDA: onPost, GET of pool failed, adding from scratch: " + inputPoolName);
+                        logger.fine(
+                          "MSDA: onPost, " +
+                            instanceName +
+                            " GET of pool failed, adding from scratch: " +
+                            inputPoolName
+                        );
                         let commandCreatePool = 'tmsh -a create ltm pool ' + inputPoolConfig;
                         return mytmsh.executeCommand(commandCreatePool);
                     })
                         // Error handling
                         .catch(function (error) {
-                            logger.fine("MSDA: onPost, Add Failure: adding/modifying a pool: " + error.message);
+                            logger.fine(
+                              "MSDA: onPost, " +
+                                instanceName +
+                                " Add Failure: adding/modifying a pool: ",
+                              error.message
+                            );
                         });
                 } else {
                     //To clear the pool
                     logger.fine("MSDA: onPost, endpoint list is empty, will clear the BIG-IP pool as well");
                     mytmsh.executeCommand("tmsh -a list ltm pool " + inputPoolName)
                     .then(function () {
-                        logger.fine("MSDA: onPost, found the pool, will delete all members as it's empty.");
+                        logger.fine(
+                          "MSDA: onPost, " +
+                            instanceName +
+                            " found the pool, will delete all members as it's empty."
+                        );
                         let commandUpdatePool = 'tmsh -a modify ltm pool ' + inputPoolName + ' members delete { all}';
                         return mytmsh.executeCommand(commandUpdatePool)
                             .then(function (response) {
-                                logger.fine("MSDA: onPost, update the pool to delete all members as it's empty. ");
+                                logger.fine(
+                                  "MSDA: onPost, " +
+                                    instanceName +
+                                    " update the pool to delete all members as it's empty. "
+                                );
                             });
                     }, function (error) {
-                        logger.fine("MSDA: onPost, GET of pool failed, adding an empty pool: " + inputPoolName);
+                        logger.fine(
+                          "MSDA: onPost, " +
+                            instanceName +
+                            " GET of pool failed, adding an empty pool: " +
+                            inputPoolName
+                        );
                         let inputEmptyPoolConfig = inputPoolName + ' monitor ' + inputMonitor + ' load-balancing-mode ' + inputPoolType + ' members none';
                         let commandCreatePool = 'tmsh -a create ltm pool ' + inputEmptyPoolConfig;
                         return mytmsh.executeCommand(commandCreatePool);
                     })
                         // Error handling - Log the error message.
                     .catch(function (error) {
-                        logger.fine("MSDA: onPost, Delete failed: " + error.message);
+                        logger.fine(
+                          "MSDA: onPost, " + instanceName + " Delete failed: ",
+                          error.message
+                        );
                     });
                 }
                 if (err) {
-                    logger.fine("MSDA: onPost, Fail to retrieve nodes from etcd. Error: " + Error(err));
+                    logger.fine(
+                      "MSDA: onPost, " +
+                        instanceName +
+                        " Fail to retrieve nodes from etcd. Error: ",
+                      Error(err)
+                    );
                 }
+                schedule();
             });
-            schedule();
         }, pollInterval);
 
-        // Stop polling while undeployment
-        if (global.msdaetcdOnPolling.includes(inputPoolName)) {
-            logger.fine("MSDA: onPost, keep polling registry  for: " + inputPoolName);            
-        } else {
+        // Stop polling while undeployment or update the config
+
+        let stopPolling = true;
+
+        if (
+            global.msdaetcdOnPolling.some(
+                (instance) => instance.name === instanceName
+            )
+        ) {
+            let signalIndex = global.msdaetcdOnPolling.findIndex(
+                (instance) => instance.name === instanceName
+            );
+            if (global.msdaetcdOnPolling[signalIndex].state === "polling") {
+                logger.fine(
+                    "MSDA: onPost, " +
+                    instanceName + " keep polling registry for: ",
+                    inputServiceName
+                );
+                stopPolling = false;
+            } else {
+                // state = "update", stop polling for existing loop; trigger a new loop for new one.
+                if (existingPollingLoop) {
+                    logger.fine(
+                        "MSDA: onPost, " +
+                        instanceName +
+                        " update config, will terminate existing polling loop."
+                    );
+                } else {
+                    logger.fine(
+                        "MSDA: onPost, " +
+                        instanceName +
+                        " update config, will trigger a new polling loop."
+                    );
+                    stopPolling = false;
+                }
+            }
+        }
+
+        if (stopPolling) {
             process.nextTick(() => {
                 clearTimeout(pollEtcd);
-                logger.fine("MSDA: onPost/stopping, Stop polling etcd   for: " + inputPoolName);
+                logger.fine(
+                  "MSDA: onPost/stopping, " +
+                    instanceName +
+                    " Stop polling etcd   for: " +
+                    inputPoolName
+                );
             });
             // Delete pool configuration in case it still there.
             setTimeout (function () {
                 const commandDeletePool = 'tmsh -a delete ltm pool ' + inputPoolName;
-                mytmsh.executeCommand(commandDeletePool)
-                .then (function () {
-                    logger.fine("MSDA: onPost/stopping, delete The pool is all removed  for: " + inputPoolName);
-                })
-                    // Error handling
-                .catch(function (err) {
-                    logger.fine("MSDA: onPost/stopping, Delete failed: " + err.message);
-                });
+                mytmsh
+                  .executeCommand(commandDeletePool)
+                  .then(function () {
+                    logger.fine(
+                      "MSDA: onPost/stopping, " +
+                        instanceName +
+                        " The pool is all removed: " +
+                        inputPoolName
+                    );
+                  })
+                  // Error handling
+                  .catch(function (err) {
+                    logger.fine(
+                      "MSDA: onPost/stopping, " +
+                        instanceName +
+                        " Delete failed: ",
+                      err.message
+                    );
+                  })
+                  .done(function () {
+                    return logger.fine(
+                      "MSDA: onPost/stopping, " + instanceName + " exit loop."
+                    );
+                  });
             }, 2000);
         }
     })();
@@ -276,68 +499,121 @@ msdaetcdConfigProcessor.prototype.onPost = function (restOperation) {
  * @param restOperation - originating rest operation that triggered this processor
  */
 msdaetcdConfigProcessor.prototype.onDelete = function (restOperation) {
-    var configTaskState,
-        blockState;
-    var oThis = this;
+  var configTaskState, blockState;
+  var oThis = this;
 
-    logger.fine("MSDA: onDelete, msdaetcdConfigProcessor.prototype.onDelete");
+  logger.fine("MSDA: onDelete, msdaetcdConfigProcessor.prototype.onDelete");
 
-    var inputProperties;
-    try {
-        configTaskState = configTaskUtil.getAndValidateConfigTaskState(restOperation);
-        blockState = configTaskState.block;
-        inputProperties = blockUtil.getMapFromPropertiesAndValidate(blockState.inputProperties,
-            ["poolName", "poolType"]);
-    } catch (ex) {
-        restOperation.fail(ex);
-        return;
-    }
-    this.completeRequest(restOperation, this.wellKnownPorts.STATUS_ACCEPTED);
+  var instanceName;
+  var inputProperties;
+  try {
+    configTaskState =
+      configTaskUtil.getAndValidateConfigTaskState(restOperation);
+    blockState = configTaskState.block;
+    inputProperties = blockUtil.getMapFromPropertiesAndValidate(
+      blockState.inputProperties,
+      ["poolName", "poolType"]
+    );
+    instanceName = blockState.name;
+  } catch (ex) {
+    restOperation.fail(ex);
+    return;
+  }
+  this.completeRequest(restOperation, this.wellKnownPorts.STATUS_ACCEPTED);
 
-    // Generic URI components, minus the 'path'
-    var uri = this.restHelper.buildUri({
-        protocol: this.wellKnownPorts.DEFAULT_HTTP_SCHEME,
-        port: this.wellKnownPorts.DEFAULT_JAVA_SERVER_PORT,
-        hostname: "localhost"
+  // Generic URI components, minus the 'path'
+  var uri = this.restHelper.buildUri({
+    protocol: this.wellKnownPorts.DEFAULT_HTTP_SCHEME,
+    port: this.wellKnownPorts.DEFAULT_JAVA_SERVER_PORT,
+    hostname: "localhost",
+  });
+
+  // In case user requested configuration to deployed to remote
+  // device, setup remote hostname, HTTPS port and device group name
+  // to be used for identified requests
+
+  // Delete the polling signal first, then remove the pool in bigip
+  let signalIndex = global.msdaetcdOnPolling.findIndex(
+    (instance) => instance.name === instanceName
+  );
+  global.msdaetcdOnPolling.splice(signalIndex, 1);
+  logger.fine(
+    "MSDA: onDelete, " +
+      instanceName +
+      " deleted polling signal!!! Continue to remove the pool in bigip."
+  );
+  // Use tmsh to update configuration
+
+  mytmsh
+    .executeCommand("tmsh -a list ltm pool " + inputProperties.poolName.value)
+    .then(
+      function () {
+        logger.fine(
+          "MSDA: onDelete, " +
+            instanceName +
+            " delete Found a pre-existing pool. Full Config Delete"
+        );
+        const commandDeletePool =
+          "tmsh -a delete ltm pool " + inputProperties.poolName.value;
+        return mytmsh
+          .executeCommand(commandDeletePool)
+          .then(function (response) {
+            logger.fine(
+              "MSDA: onDelete, " +
+                instanceName +
+                " The pool is all removed"
+            );
+            configTaskUtil.sendPatchToUnBoundState(
+              configTaskState,
+              oThis.getUri().href,
+              restOperation.getBasicAuthorization()
+            );
+          });
+      },
+      function (error) {
+        // the configuration must be clean. Nothing to delete
+        logger.fine(
+          "MSDA: onDelete, " + instanceName + " pool does't exist: ",
+          error.message
+        );
+        configTaskUtil.sendPatchToUnBoundState(
+          configTaskState,
+          oThis.getUri().href,
+          restOperation.getBasicAuthorization()
+        );
+      }
+    )
+    // Error handling - Set the block as 'ERROR'
+    .catch(function (error) {
+      logger.fine(
+        "MSDA: onDelete, " +
+          instanceName +
+          " Delete failed, setting block to ERROR: ",
+        error.message
+      );
+      configTaskUtil.sendPatchToErrorState(
+        configTaskState,
+        error,
+        oThis.getUri().href,
+        restOperation.getBasicAuthorization()
+      );
+    })
+    // Always called, no matter the disposition. Also handles re-throwing internal exceptions.
+    .done(function () {
+      logger.fine(
+        "MSDA: onDelete, " +
+          instanceName +
+          " Bigip configuration delete DONE!!!"
+      ); // happens regardless of errors or no errors ....
+      // Delete the polling signal
+      //let signalIndex = global.msdaetcdOnPolling.indexOf(
+      //  inputProperties.poolName.value
+      //);
+      //global.msdaetcdOnPolling.splice(signalIndex, 1);
     });
-
-    // In case user requested configuration to deployed to remote
-    // device, setup remote hostname, HTTPS port and device group name
-    // to be used for identified requests
-
-    // Use tmsh to update configuration
-
-    mytmsh.executeCommand("tmsh -a list ltm pool " + inputProperties.poolName.value)
-        .then(function () {
-            logger.fine("MSDA: onDelete, delete Found a pre-existing pool. Full Config Delete");
-            const commandDeletePool = 'tmsh -a delete ltm pool ' + inputProperties.poolName.value;
-            return mytmsh.executeCommand(commandDeletePool)
-            .then (function (response) {
-                logger.fine("MSDA: onDelete, delete The pool is all removed");
-                configTaskUtil.sendPatchToUnBoundState(configTaskState,
-                    oThis.getUri().href, restOperation.getBasicAuthorization());
-                });
-        }, function (error) {
-            // the configuration must be clean. Nothing to delete
-            configTaskUtil.sendPatchToUnBoundState(configTaskState, 
-                oThis.getUri().href, restOperation.getBasicAuthorization());
-        })
-        // Error handling - Set the block as 'ERROR'
-        .catch(function (error) {
-            logger.fine("MSDA: onDelete, Delete failed, setting block to ERROR: " + error.message);
-            configTaskUtil.sendPatchToErrorState(configTaskState, error,
-                oThis.getUri().href, restOperation.getBasicAuthorization());
-        })
-        // Always called, no matter the disposition. Also handles re-throwing internal exceptions.
-        .done(function () {
-            logger.fine("MSDA: onDelete, delete DONE!!! Continue to clear the polling signal for: : " + inputProperties.poolName.value);  // happens regardless of errors or no errors ....
-            // Delete the polling signal
-            let signalIndex = global.msdaetcdOnPolling.indexOf(inputProperties.poolName.value);
-            global.msdaetcdOnPolling.splice(signalIndex,1);
-        });
-    // Stop poll etcd registry while undeploy ??
-    //stopPollEtcd = true;
-    logger.fine("MSDA: onDelete, Stop polling etcd while ondelete action.");
+  // Stop poll etcd registry while undeploy ??
+  //stopPollEtcd = true;
+  //logger.fine("MSDA: onDelete, Stop polling etcd while ondelete action.");
 };
 
 module.exports = msdaetcdConfigProcessor;

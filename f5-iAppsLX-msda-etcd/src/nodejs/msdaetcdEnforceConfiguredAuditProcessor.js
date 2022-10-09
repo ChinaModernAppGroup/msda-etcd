@@ -14,6 +14,12 @@
 
   Updated by Ping Xiong on May/13/2022
   Updated by Ping Xiong on Jul/3/2022, using global var for polling signal.
+  Updated by Ping Xiong on Oct/09/2022, modify the polling signal into a json object to keep more information.
+  let blockInstance = {
+    name: "instanceName", // a block instance of the iapplx config
+    state: "polling", // can be "polling" for normal running state; "update" to modify the iapplx config
+    bigipPool: "/Common/samplePool"
+  }
 */
 
 'use strict';
@@ -102,14 +108,19 @@ msdaetcdEnforceConfiguredAuditProcessor.prototype.onPost = function (restOperati
             logger.fine("MSDA etcd Audit: msdaetcdOnpolling: ", global.msdaetcdOnPolling);
             logger.fine("MSDA etcd Audit: msdaetcd poolName: ", blockInputProperties.poolName.value);
             if (
-                    global.msdaetcdOnPolling.includes(blockInputProperties.poolName.value)
+                    global.msdaetcdOnPolling.some(
+                        (instance) =>
+                            instance.bigipPool === blockInputProperties.poolName.value
+                    )
                 ) {
                     logger.fine(
-                    "MSDA etcd audit onPost: ConfigProcessor is on polling state, no need to fire an onPost."
+                      "MSDA etcd audit onPost: ConfigProcessor is on polling state, no need to fire an onPost.",
+                      blockInputProperties.poolName.value
                     );
                 } else {
                     logger.fine(
-                    "MSDA etcd audit onPost: ConfigProcessor is NOT on polling state, will trigger ConfigProcessor onPost."
+                      "MSDA etcd audit onPost: ConfigProcessor is NOT on polling state, will trigger ConfigProcessor onPost.",
+                      blockInputProperties.poolName.value
                     );
                     try {
                         var poolNameObject = getObjectByID(
@@ -135,7 +146,7 @@ msdaetcdEnforceConfiguredAuditProcessor.prototype.onPost = function (restOperati
             );
             restOperation.fail(ex);
         }
-    }, 1000);
+    }, 2000);
 };
 
 var getObjectByID = function ( key, array) {
